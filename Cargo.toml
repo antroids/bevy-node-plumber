@@ -1,0 +1,15 @@
+[package]
+name = "bevy-node-plumber"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+keywords = ["game", "gamedev", "bevy"]
+description = "Tools for creating additional pipelines from main world for Bevy Engine"
+authors = ["Anton Kharuzhyi <publicantroids@gmail.com>"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bevy = "0.12.1"
+bevy_render = "0.12.1"
+thiserror = "1.0.56"
