@@ -156,3 +156,7 @@ impl<T: Pod> InputBuffer<T> for BufferVecNode<T> {
     }
 }
 impl_node_for_input_buffer!(BufferVecNode<T: Pod + Send + Sync + 'static>);
+
+// pub(crate) enum InputImageState {}
+//
+// pub struct InputImageNode {}

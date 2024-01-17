@@ -4,14 +4,16 @@ use crate::resource::{
     BindResourceCreationInfo, BindResourceDirection, OwnBindResource,
     StaticBindResourceCreationDescriptor,
 };
-use crate::{Provider, ProviderSystem, UpdateProvidersSchedule};
-use bevy::app::App;
+use crate::{MainWorldEntity, NodeProvider};
+use bevy::ecs::query::QueryItem;
 use bevy::log::debug;
-use bevy::prelude::{default, Component, Mut, ResMut, World};
+use bevy::prelude::*;
 use bevy::utils::HashMap;
+use bevy_render::extract_component::ExtractComponent;
 use bevy_render::render_graph::OutputSlotError;
+use bevy_render::render_resource::PipelineCache;
 use bevy_render::renderer::{RenderContext, RenderDevice};
-use bevy_render::{render_graph, render_resource, MainWorld};
+use bevy_render::{render_graph, render_resource};
 use std::any::type_name;
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
@@ -223,13 +225,97 @@ impl ComputeNodeImpl {
     }
 }
 
-impl ProviderSystem for ComputeNode {
-    fn add_systems_to_render_world(app: &mut App) {
-        app.add_systems(UpdateProvidersSchedule, ComputeNode::update_in_render_world);
-    }
-}
+impl NodeProvider for ComputeNode {
+    fn update(&mut self, _world: &mut World) {
+        let pipeline_cache = _world.resource::<PipelineCache>();
+        let new_state = match &self.state {
+            ComputeNodeState::Creating {
+                pipeline_descriptor: pipeline,
+            } => ComputeNodeState::PipelineQueued {
+                pipeline_descriptor: pipeline.clone(),
+                pipeline_id: pipeline_cache.queue_compute_pipeline(pipeline.clone()),
+            },
+            ComputeNodeState::PipelineQueued {
+                pipeline_id,
+                pipeline_descriptor: descriptor,
+            } => match pipeline_cache.get_compute_pipeline_state(*pipeline_id) {
+                render_resource::CachedPipelineState::Ok(
+                    render_resource::Pipeline::ComputePipeline(pipeline),
+                ) => {
+                    let cached_pipeline = pipeline_cache
+                        .get_compute_pipeline(*pipeline_id)
+                        .expect("Cannot find Compute pipeline with status Ok in cache");
+                    let layout = descriptor
+                        .layout
+                        .get(self.bind_group_index as usize)
+                        .map_or(
+                            cached_pipeline
+                                .get_bind_group_layout(self.bind_group_index)
+                                .into(),
+                            |l| l.clone(),
+                        );
+                    let pipeline = pipeline.clone();
+                    ComputeNodeState::PipelineCached { layout, pipeline }
+                }
+                render_resource::CachedPipelineState::Err(err) => {
+                    ComputeNodeState::Err(err.to_string())
+                }
+                _ => {
+                    return;
+                }
+            },
+            ComputeNodeState::PipelineCached { layout, pipeline } => {
+                let mut input_slots: Vec<render_graph::SlotInfo> = default();
+                let mut output_slots: Vec<render_graph::SlotInfo> = default();
 
-impl Provider for ComputeNode {
+                for bind_resource_info in &self.binding_resource_info {
+                    match &bind_resource_info.direction {
+                        BindResourceDirection::Input(slot_type) => {
+                            input_slots.push(render_graph::SlotInfo::new(
+                                bind_resource_info.name.clone(),
+                                *slot_type,
+                            ));
+                        }
+                        BindResourceDirection::Output(bind_resource_descriptor) => {
+                            let slot_info = render_graph::SlotInfo::new(
+                                bind_resource_info.name.clone(),
+                                bind_resource_descriptor.to_slot_type(),
+                            );
+                            output_slots.push(slot_info);
+                        }
+                        BindResourceDirection::InputOutput(slot_type) => {
+                            let slot_info = render_graph::SlotInfo::new(
+                                bind_resource_info.name.clone(),
+                                *slot_type,
+                            );
+                            input_slots.push(slot_info.clone());
+                            output_slots.push(slot_info);
+                        }
+                    }
+                }
+
+                ComputeNodeState::ReadyToRun {
+                    node: ComputeNodeImpl {
+                        label: self.label.clone(),
+                        bind_group_index: self.bind_group_index,
+                        layout: layout.clone(),
+                        pipeline: pipeline.clone(),
+                        bind_resource_info: self.binding_resource_info.clone(),
+                        bind_resource_cache: default(),
+                        input_slots,
+                        output_slots,
+                        dispatch_workgroups_strategy: self.dispatch_workgroups_strategy.clone(),
+                    },
+                }
+            }
+            _ => {
+                return;
+            }
+        };
+        debug!("Compute node state after update: {:?}", &new_state);
+        self.state = new_state;
+    }
+
     fn state(&self) -> ProviderState {
         match &self.state {
             ComputeNodeState::ReadyToRun { .. } => ProviderState::CanCreateNode,
@@ -259,105 +345,6 @@ impl Provider for ComputeNode {
 }
 
 impl ComputeNode {
-    pub fn update_in_render_world(
-        mut main_world: ResMut<MainWorld>,
-        mut pipeline_cache: ResMut<render_resource::PipelineCache>,
-    ) {
-        let mut query = main_world.query::<&mut ComputeNode>();
-
-        for node in query.iter_mut(main_world.as_mut()) {
-            Self::update_state(node, pipeline_cache.reborrow());
-        }
-    }
-
-    fn update_state(mut mut_self: Mut<Self>, pipeline_cache: Mut<render_resource::PipelineCache>) {
-        mut_self.state = match &mut_self.state {
-            ComputeNodeState::Creating {
-                pipeline_descriptor: pipeline,
-            } => ComputeNodeState::PipelineQueued {
-                pipeline_descriptor: pipeline.clone(),
-                pipeline_id: pipeline_cache.queue_compute_pipeline(pipeline.clone()),
-            },
-            ComputeNodeState::PipelineQueued {
-                pipeline_id,
-                pipeline_descriptor: descriptor,
-            } => match pipeline_cache.get_compute_pipeline_state(*pipeline_id) {
-                render_resource::CachedPipelineState::Ok(
-                    render_resource::Pipeline::ComputePipeline(pipeline),
-                ) => {
-                    let cached_pipeline = pipeline_cache
-                        .get_compute_pipeline(*pipeline_id)
-                        .expect("Cannot find Compute pipeline with status Ok in cache");
-                    let layout = descriptor
-                        .layout
-                        .get(mut_self.bind_group_index as usize)
-                        .map_or(
-                            cached_pipeline
-                                .get_bind_group_layout(mut_self.bind_group_index)
-                                .into(),
-                            |l| l.clone(),
-                        );
-                    let pipeline = pipeline.clone();
-                    ComputeNodeState::PipelineCached { layout, pipeline }
-                }
-                render_resource::CachedPipelineState::Err(err) => {
-                    ComputeNodeState::Err(err.to_string())
-                }
-                _ => {
-                    return;
-                }
-            },
-            ComputeNodeState::PipelineCached { layout, pipeline } => {
-                let mut input_slots: Vec<render_graph::SlotInfo> = default();
-                let mut output_slots: Vec<render_graph::SlotInfo> = default();
-
-                for bind_resource_info in &mut_self.binding_resource_info {
-                    match &bind_resource_info.direction {
-                        BindResourceDirection::Input(slot_type) => {
-                            input_slots.push(render_graph::SlotInfo::new(
-                                bind_resource_info.name.clone(),
-                                *slot_type,
-                            ));
-                        }
-                        BindResourceDirection::Output(bind_resource_descriptor) => {
-                            let slot_info = render_graph::SlotInfo::new(
-                                bind_resource_info.name.clone(),
-                                bind_resource_descriptor.to_slot_type(),
-                            );
-                            output_slots.push(slot_info);
-                        }
-                        BindResourceDirection::InputOutput(slot_type) => {
-                            let slot_info = render_graph::SlotInfo::new(
-                                bind_resource_info.name.clone(),
-                                *slot_type,
-                            );
-                            input_slots.push(slot_info.clone());
-                            output_slots.push(slot_info);
-                        }
-                    }
-                }
-
-                ComputeNodeState::ReadyToRun {
-                    node: ComputeNodeImpl {
-                        label: mut_self.label.clone(),
-                        bind_group_index: mut_self.bind_group_index,
-                        layout: layout.clone(),
-                        pipeline: pipeline.clone(),
-                        bind_resource_info: mut_self.binding_resource_info.clone(),
-                        bind_resource_cache: default(),
-                        input_slots,
-                        output_slots,
-                        dispatch_workgroups_strategy: mut_self.dispatch_workgroups_strategy.clone(),
-                    },
-                }
-            }
-            _ => {
-                return;
-            }
-        };
-        debug!("Compute node state after update: {:?}", &mut_self.state);
-    }
-
     fn slot_value_to_bind_resource(
         slot_value: &render_graph::SlotValue,
     ) -> render_resource::BindingResource {
@@ -372,5 +359,15 @@ impl ComputeNode {
             }
             render_graph::SlotValue::Entity(_) => todo!(),
         }
+    }
+}
+
+impl ExtractComponent for ComputeNode {
+    type Query = (&'static Self, Entity);
+    type Filter = Changed<Self>;
+    type Out = (Self, MainWorldEntity);
+
+    fn extract_component(item: QueryItem<'_, Self::Query>) -> Option<Self::Out> {
+        Some((item.0.clone(), MainWorldEntity(item.1)))
     }
 }

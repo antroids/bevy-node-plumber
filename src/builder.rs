@@ -4,7 +4,7 @@ use crate::graph::{
 use crate::prelude::compute::ComputeNodeState;
 use crate::prelude::*;
 use crate::resource::BindResourceCreationStrategy;
-use crate::Provider;
+use crate::NodeProvider;
 use bevy::prelude::*;
 use bevy::utils::HashMap;
 use bevy_render::render_graph::{NodeLabel, RenderGraph, SlotInfo, SlotLabel, SlotType};
@@ -340,7 +340,7 @@ impl SubGraphBuilder {
     option_setter!(name: Cow<'static, str>);
     option_setter!(trigger: SubGraphTrigger);
 
-    pub fn add_node_provider<T: Provider + 'static>(
+    pub fn add_node_provider<T: NodeProvider + 'static>(
         mut self,
         node_name: Cow<'static, str>,
         provider_entity: Entity,

@@ -1,10 +1,10 @@
-use crate::UpdateGraphSchedule;
 use bevy::log::warn;
 use bevy::prelude::*;
 use bevy::utils::HashMap;
 use bevy_render::render_graph::{NodeRunError, RenderGraph, RenderGraphContext, SlotInfo};
 use bevy_render::renderer::RenderContext;
-use bevy_render::{render_graph, MainWorld, RenderApp};
+use bevy_render::RenderSet::PrepareResources;
+use bevy_render::{render_graph, MainWorld, Render, RenderApp};
 use std::any::TypeId;
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,18 +19,23 @@ impl Plugin for SubGraphPlugin {
         let render_app = app
             .get_sub_app_mut(RenderApp)
             .expect("Cannot find Render Plugin");
-        render_app.add_systems(UpdateGraphSchedule, SubGraph::update_in_render_world);
+        render_app.init_resource::<SubGraphCache>();
+        render_app.add_systems(ExtractSchedule, SubGraph::extract_to_render_world);
+        render_app.add_systems(
+            Render,
+            SubGraphCache::update_system.in_set(PrepareResources),
+        );
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ProviderDescriptor {
     pub(crate) name: Cow<'static, str>,
     pub(crate) ty: TypeId,
     pub(crate) state: ProviderState,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Eq, PartialEq)]
 pub enum ProviderState {
     #[default]
     Created,
@@ -39,7 +44,7 @@ pub enum ProviderState {
     Err(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Edge {
     InputSlotEdge {
         output_node: render_graph::NodeLabel,
@@ -57,6 +62,7 @@ pub enum Edge {
 #[derive(Debug)]
 pub(crate) enum SubGraphDeployState {
     Queued(Vec<Edge>, RenderGraph),
+    MovedToRenderWorld,
     Deployed,
 }
 
@@ -102,14 +108,45 @@ impl SubGraph {
         }
     }
 
-    fn update_in_render_world(
+    fn extract_to_render_world(
         mut main_world: ResMut<MainWorld>,
-        mut render_graph: ResMut<RenderGraph>,
+        mut sub_graph_cache: ResMut<SubGraphCache>,
     ) {
-        for mut sub_graph in main_world
-            .query::<&mut SubGraph>()
-            .iter_mut(&mut main_world)
-        {
+        let mut query = main_world.query::<(&mut Self, Entity)>();
+
+        for (mut sub_graph, entity) in query.iter_mut(&mut main_world) {
+            if matches!(sub_graph.graph, SubGraphDeployState::Queued(..)) {
+                let graph = std::mem::replace(
+                    &mut sub_graph.graph,
+                    SubGraphDeployState::MovedToRenderWorld,
+                );
+                sub_graph_cache.0.insert(
+                    entity,
+                    SubGraph {
+                        name: sub_graph.name.clone(),
+                        providers: sub_graph.providers.clone(),
+                        graph,
+                        trigger: sub_graph.trigger.clone(),
+                    },
+                );
+            }
+        }
+    }
+}
+
+#[derive(Resource, Default)]
+pub struct SubGraphCache(pub(crate) HashMap<Entity, SubGraph>);
+
+impl SubGraphCache {
+    fn update_system(world: &mut World) {
+        world.resource_scope(|world, mut cache: Mut<Self>| {
+            cache.update(world);
+        });
+    }
+
+    fn update(&mut self, world: &mut World) {
+        let mut render_graph = world.resource_mut::<RenderGraph>();
+        for sub_graph in self.0.values_mut() {
             if matches!(sub_graph.graph, SubGraphDeployState::Queued(..))
                 && matches!(
                     sub_graph.providers_state_summary(),

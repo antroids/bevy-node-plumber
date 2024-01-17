@@ -1,3 +1,4 @@
+use bevy_render::render_resource::TextureViewDescriptor;
 use bevy_render::renderer::RenderDevice;
 use bevy_render::{render_graph, render_resource};
 use std::borrow::Cow;
@@ -13,12 +14,14 @@ pub enum BindResourceCreationStrategy<T: Clone + Debug + PartialEq> {
 pub enum BindResourceCreationDescriptor {
     Buffer(BindResourceCreationStrategy<render_resource::BufferDescriptor<'static>>),
     Sampler(BindResourceCreationStrategy<render_resource::SamplerDescriptor<'static>>),
+    Texture(BindResourceCreationStrategy<render_resource::TextureDescriptor<'static>>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum StaticBindResourceCreationDescriptor {
     Buffer(render_resource::BufferDescriptor<'static>),
     Sampler(render_resource::SamplerDescriptor<'static>),
+    Texture(render_resource::TextureDescriptor<'static>),
 }
 
 impl StaticBindResourceCreationDescriptor {
@@ -29,6 +32,11 @@ impl StaticBindResourceCreationDescriptor {
             }
             StaticBindResourceCreationDescriptor::Sampler(sampler_descriptor) => {
                 OwnBindResource::Sampler(render_device.create_sampler(sampler_descriptor))
+            }
+            StaticBindResourceCreationDescriptor::Texture(texture_descriptor) => {
+                let texture = render_device.create_texture(texture_descriptor);
+                let default_view = texture.create_view(&TextureViewDescriptor::default());
+                OwnBindResource::Texture(texture, default_view)
             }
         }
     }
@@ -52,6 +60,12 @@ impl BindResourceCreationDescriptor {
                     BindResourceCreationStrategy::FromGraphContext(f) => f(graph_context),
                 })
             }
+            BindResourceCreationDescriptor::Texture(t) => {
+                StaticBindResourceCreationDescriptor::Texture(match t {
+                    BindResourceCreationStrategy::Static(s) => s,
+                    BindResourceCreationStrategy::FromGraphContext(f) => f(graph_context),
+                })
+            }
         }
     }
 
@@ -59,6 +73,7 @@ impl BindResourceCreationDescriptor {
         match self {
             BindResourceCreationDescriptor::Buffer(_) => render_graph::SlotType::Buffer,
             BindResourceCreationDescriptor::Sampler(_) => render_graph::SlotType::Sampler,
+            BindResourceCreationDescriptor::Texture(_) => render_graph::SlotType::TextureView,
         }
     }
 }
@@ -67,6 +82,7 @@ impl BindResourceCreationDescriptor {
 pub enum OwnBindResource {
     Buffer(render_resource::Buffer),
     Sampler(render_resource::Sampler),
+    Texture(render_resource::Texture, render_resource::TextureView),
 }
 
 impl OwnBindResource {
@@ -74,6 +90,7 @@ impl OwnBindResource {
         match self {
             OwnBindResource::Buffer(buffer) => render_graph::SlotValue::Buffer(buffer.clone()),
             OwnBindResource::Sampler(sampler) => render_graph::SlotValue::Sampler(sampler.clone()),
+            OwnBindResource::Texture(_, view) => render_graph::SlotValue::TextureView(view.clone()),
         }
     }
 
@@ -81,6 +98,9 @@ impl OwnBindResource {
         match self {
             OwnBindResource::Buffer(buffer) => buffer.as_entire_binding(),
             OwnBindResource::Sampler(sampler) => render_resource::BindingResource::Sampler(sampler),
+            OwnBindResource::Texture(_, view) => {
+                render_resource::BindingResource::TextureView(view)
+            }
         }
     }
 }
