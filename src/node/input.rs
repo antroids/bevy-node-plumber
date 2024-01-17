@@ -1,6 +1,8 @@
 use bevy::core::Pod;
 use bevy::log::{debug, error};
-use bevy::prelude::{Component, World};
+use bevy::prelude::*;
+use bevy_render::prelude::Image;
+use bevy_render::render_asset::RenderAssets;
 use bevy_render::render_graph::{NodeRunError, RenderGraphContext, SlotInfo, SlotType, SlotValue};
 use bevy_render::render_resource::encase::internal::WriteInto;
 use bevy_render::render_resource::{
@@ -157,6 +159,53 @@ impl<T: Pod> InputBuffer<T> for BufferVecNode<T> {
 }
 impl_node_for_input_buffer!(BufferVecNode<T: Pod + Send + Sync + 'static>);
 
-// pub(crate) enum InputImageState {}
-//
-// pub struct InputImageNode {}
+#[derive(Clone, Debug)]
+enum InputTextureSource {
+    Image(Handle<Image>),
+}
+
+#[derive(Component, Clone, Debug)]
+pub struct InputTextureNode {
+    source: InputTextureSource,
+}
+
+impl InputTextureNode {
+    pub fn from_image(image: Handle<Image>) -> Self {
+        Self {
+            source: InputTextureSource::Image(image),
+        }
+    }
+}
+
+impl render_graph::Node for InputTextureNode {
+    fn output(&self) -> Vec<SlotInfo> {
+        vec![SlotInfo::new(SLOT_NAME, SlotType::TextureView)]
+    }
+
+    fn run(
+        &self,
+        graph: &mut RenderGraphContext,
+        _render_context: &mut RenderContext,
+        world: &World,
+    ) -> Result<(), NodeRunError> {
+        match &self.source {
+            InputTextureSource::Image(image) => {
+                let render_assets = world.resource::<RenderAssets<Image>>();
+                if let Some(prepared_image) = render_assets.get(image) {
+                    debug!(
+                        "Prepared GPU image found: `{:?}`. Output `{}` set to texture view `{:?}`",
+                        &prepared_image, SLOT_NAME, &prepared_image.texture_view
+                    );
+                    graph.set_output(
+                        SLOT_NAME,
+                        SlotValue::TextureView(prepared_image.texture_view.clone()),
+                    )?;
+                } else {
+                    error!("Prepared GPU image not found: `{:?}`", image);
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
