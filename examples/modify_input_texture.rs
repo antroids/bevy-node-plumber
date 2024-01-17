@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_node_plumber::node::compute::ComputeNode;
 use bevy_node_plumber::prelude::*;
 use bevy_render::main_graph::node::CAMERA_DRIVER;
 use bevy_render::render_graph::RenderGraph;
@@ -12,7 +13,8 @@ fn main() {
         filter: "debug,wgpu_core=warn,wgpu_hal=warn,mygame=debug".into(),
     }));
     app.add_plugins(NodePlumberPlugin)
-        .add_systems(Startup, test_startup);
+        .add_systems(Startup, test_startup)
+        .add_systems(PreUpdate, update_node_on_shader_changed);
 
     #[cfg(debug_assertions)]
     {
@@ -92,4 +94,26 @@ fn test_startup(
         .unwrap();
 
     commands.spawn((sub_graph, trigger));
+}
+
+fn update_node_on_shader_changed(
+    mut events: EventReader<AssetEvent<Shader>>,
+    mut query: Query<&mut ComputeNode>,
+) {
+    let ids: Vec<AssetId<Shader>> = events
+        .read()
+        .filter_map(|event| {
+            if let AssetEvent::Modified { id } = event {
+                Some(*id)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for mut compute_node in query.iter_mut() {
+        if ids.contains(&compute_node.pipeline_descriptor.shader.id()) {
+            compute_node.set_changed();
+        }
+    }
 }

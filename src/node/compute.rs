@@ -20,20 +20,19 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Component, Clone, Debug)]
 pub struct ComputeNode {
-    pub(crate) label: Option<Cow<'static, str>>,
-    pub(crate) bind_group_index: u32,
+    pub label: Option<Cow<'static, str>>,
+    pub bind_group_index: u32,
+    pub pipeline_descriptor: render_resource::ComputePipelineDescriptor,
+    pub binding_resource_info: Vec<BindResourceCreationInfo>,
+    pub dispatch_workgroups_strategy: DispatchWorkgroupsStrategy,
+
     pub(crate) state: ComputeNodeState,
-    pub(crate) binding_resource_info: Vec<BindResourceCreationInfo>,
-    pub(crate) dispatch_workgroups_strategy: DispatchWorkgroupsStrategy,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) enum ComputeNodeState {
-    Creating {
-        pipeline_descriptor: render_resource::ComputePipelineDescriptor,
-    },
+    Creating,
     PipelineQueued {
-        pipeline_descriptor: render_resource::ComputePipelineDescriptor,
         pipeline_id: render_resource::CachedComputePipelineId,
     },
     PipelineCached {
@@ -226,44 +225,46 @@ impl ComputeNodeImpl {
 }
 
 impl NodeProvider for ComputeNode {
+    fn on_component_changed(&mut self) {
+        self.state = ComputeNodeState::Creating;
+    }
+
     fn update(&mut self, _world: &mut World) {
         let pipeline_cache = _world.resource::<PipelineCache>();
         let new_state = match &self.state {
-            ComputeNodeState::Creating {
-                pipeline_descriptor: pipeline,
-            } => ComputeNodeState::PipelineQueued {
-                pipeline_descriptor: pipeline.clone(),
-                pipeline_id: pipeline_cache.queue_compute_pipeline(pipeline.clone()),
+            ComputeNodeState::Creating => ComputeNodeState::PipelineQueued {
+                pipeline_id: pipeline_cache
+                    .queue_compute_pipeline(self.pipeline_descriptor.clone()),
             },
-            ComputeNodeState::PipelineQueued {
-                pipeline_id,
-                pipeline_descriptor: descriptor,
-            } => match pipeline_cache.get_compute_pipeline_state(*pipeline_id) {
-                render_resource::CachedPipelineState::Ok(
-                    render_resource::Pipeline::ComputePipeline(pipeline),
-                ) => {
-                    let cached_pipeline = pipeline_cache
-                        .get_compute_pipeline(*pipeline_id)
-                        .expect("Cannot find Compute pipeline with status Ok in cache");
-                    let layout = descriptor
-                        .layout
-                        .get(self.bind_group_index as usize)
-                        .map_or(
-                            cached_pipeline
-                                .get_bind_group_layout(self.bind_group_index)
-                                .into(),
-                            |l| l.clone(),
-                        );
-                    let pipeline = pipeline.clone();
-                    ComputeNodeState::PipelineCached { layout, pipeline }
+            ComputeNodeState::PipelineQueued { pipeline_id } => {
+                match pipeline_cache.get_compute_pipeline_state(*pipeline_id) {
+                    render_resource::CachedPipelineState::Ok(
+                        render_resource::Pipeline::ComputePipeline(pipeline),
+                    ) => {
+                        let cached_pipeline = pipeline_cache
+                            .get_compute_pipeline(*pipeline_id)
+                            .expect("Cannot find Compute pipeline with status Ok in cache");
+                        let layout = self
+                            .pipeline_descriptor
+                            .layout
+                            .get(self.bind_group_index as usize)
+                            .map_or(
+                                cached_pipeline
+                                    .get_bind_group_layout(self.bind_group_index)
+                                    .into(),
+                                |l| l.clone(),
+                            );
+                        let pipeline = pipeline.clone();
+                        ComputeNodeState::PipelineCached { layout, pipeline }
+                    }
+                    render_resource::CachedPipelineState::Err(err) => {
+                        ComputeNodeState::Err(err.to_string())
+                    }
+                    _ => {
+                        return;
+                    }
                 }
-                render_resource::CachedPipelineState::Err(err) => {
-                    ComputeNodeState::Err(err.to_string())
-                }
-                _ => {
-                    return;
-                }
-            },
+            }
             ComputeNodeState::PipelineCached { layout, pipeline } => {
                 let mut input_slots: Vec<render_graph::SlotInfo> = default();
                 let mut output_slots: Vec<render_graph::SlotInfo> = default();

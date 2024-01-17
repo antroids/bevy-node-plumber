@@ -86,13 +86,23 @@ impl<T: NodeProvider + Sized> NodeProviderPlugin<T> {
                     }
 
                     let node_name = descriptor.name.clone();
-                    if let SubGraphDeployState::Queued(_, graph) = &mut graph_component.graph {
-                        provider.add_node_to_graph(graph, node_name);
-                    } else if let Some(sub_graph) = render_graph.get_sub_graph_mut(&sub_graph_name)
-                    {
-                        provider.add_node_to_graph(sub_graph, node_name);
-                    } else {
-                        error!("Sub graph {} not found", sub_graph_name);
+                    match &mut graph_component.graph {
+                        SubGraphDeployState::Queued(_, graph) => {
+                            provider.add_node_to_graph(graph, node_name);
+                        }
+                        SubGraphDeployState::MovedToRenderWorld => {}
+                        SubGraphDeployState::Deployed => {
+                            // Replace by only Node impl, dummy node should not be added to deployed graph
+                            if provider.state() == ProviderState::CanCreateNode {
+                                if let Some(sub_graph) =
+                                    render_graph.get_sub_graph_mut(&sub_graph_name)
+                                {
+                                    provider.add_node_to_graph(sub_graph, node_name)
+                                } else {
+                                    error!("Sub graph {} not found", sub_graph_name);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -103,6 +113,7 @@ impl<T: NodeProvider + Sized> NodeProviderPlugin<T> {
 impl<T: NodeProvider + Sized> Plugin for NodeProviderPlugin<T> {
     fn build(&self, app: &mut App) {
         app.add_plugins(ExtractComponentPlugin::<T>::default());
+        app.add_systems(PostUpdate, on_node_provider_component_changed::<T>);
     }
 
     fn finish(&self, app: &mut App) {
@@ -118,7 +129,14 @@ impl<T: NodeProvider + Sized> Plugin for NodeProviderPlugin<T> {
     }
 }
 
+fn on_node_provider_component_changed<T: NodeProvider>(mut query: Query<&mut T, Changed<T>>) {
+    for mut provider in query.iter_mut() {
+        provider.on_component_changed();
+    }
+}
+
 pub trait NodeProvider: Component + Clone + ExtractComponent {
+    fn on_component_changed(&mut self) {}
     fn update(&mut self, _world: &mut World) {}
     fn state(&self) -> ProviderState;
     fn add_node_to_graph(&self, graph: &mut RenderGraph, node_name: Cow<'static, str>);

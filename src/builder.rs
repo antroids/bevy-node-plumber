@@ -97,22 +97,21 @@ impl ComputeNodeBuilder {
         Ok(compute::ComputeNode {
             label: self.label.clone(),
             bind_group_index: self.bind_group_index.unwrap_or(0),
-            state: ComputeNodeState::Creating {
-                pipeline_descriptor: ComputePipelineDescriptor {
-                    label: self.label,
-                    layout: self.bind_group_layout.unwrap_or_default(),
-                    push_constant_ranges: self.push_constant_ranges.unwrap_or_default(),
-                    shader: self.shader.ok_or(BuilderError::ValueNotDefined("shader"))?,
-                    shader_defs: self.shader_defs.unwrap_or_default(),
-                    entry_point: self
-                        .entry_point
-                        .ok_or(BuilderError::ValueNotDefined("entry_point"))?,
-                },
+            pipeline_descriptor: ComputePipelineDescriptor {
+                label: self.label,
+                layout: self.bind_group_layout.unwrap_or_default(),
+                push_constant_ranges: self.push_constant_ranges.unwrap_or_default(),
+                shader: self.shader.ok_or(BuilderError::ValueNotDefined("shader"))?,
+                shader_defs: self.shader_defs.unwrap_or_default(),
+                entry_point: self
+                    .entry_point
+                    .ok_or(BuilderError::ValueNotDefined("entry_point"))?,
             },
             binding_resource_info: bind_resource?,
             dispatch_workgroups_strategy: self.dispatch_workgroups_strategy.ok_or(
                 BuilderError::ValueNotDefined("dispatch_workgroups_strategy"),
             )?,
+            state: ComputeNodeState::Creating,
         })
     }
 }
