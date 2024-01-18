@@ -67,7 +67,7 @@ pub struct ComputeNodeBuilder {
 
     bind_resources: Vec<BuildResult<BindResourceCreationInfo>>,
 
-    dispatch_workgroups_strategy: Option<compute::DispatchWorkgroupsStrategy>,
+    dispatch_workgroups_strategy: Option<DispatchWorkgroupsStrategy>,
 }
 
 impl ComputeNodeBuilder {
@@ -78,7 +78,7 @@ impl ComputeNodeBuilder {
     option_setter!(shader: Handle<Shader>);
     option_setter!(shader_defs: Vec<ShaderDefVal>);
     option_into_setter!(entry_point: Cow<'static, str>);
-    option_setter!(dispatch_workgroups_strategy: compute::DispatchWorkgroupsStrategy);
+    option_setter!(dispatch_workgroups_strategy: DispatchWorkgroupsStrategy);
 
     pub fn bind_resource(self) -> AddBindResourceInfoBuilder<Self> {
         AddBindResourceInfoBuilder::new(

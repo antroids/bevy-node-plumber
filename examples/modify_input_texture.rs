@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use bevy_node_plumber::node::compute::ComputeNode;
 use bevy_node_plumber::prelude::*;
 use bevy_render::main_graph::node::CAMERA_DRIVER;
 use bevy_render::render_graph::RenderGraph;
@@ -60,7 +59,7 @@ fn test_startup(
     let fill_texture_view_node = builder::ComputeNodeBuilder::default()
         .shader(asset_server.load("shaders/example_fill_texture_view.wgsl"))
         .entry_point("main")
-        .dispatch_workgroups_strategy(compute::DispatchWorkgroupsStrategy::Static(640, 480, 1));
+        .dispatch_workgroups_strategy(DispatchWorkgroupsStrategy::Static(640, 480, 1));
     let fill_texture_view_node = fill_texture_view_node
         .bind_resource()
         .name("texture")
@@ -98,7 +97,7 @@ fn test_startup(
 
 fn update_node_on_shader_changed(
     mut events: EventReader<AssetEvent<Shader>>,
-    mut query: Query<&mut ComputeNode>,
+    mut query: Query<&mut compute::ComputeNode>,
 ) {
     let ids: Vec<AssetId<Shader>> = events
         .read()

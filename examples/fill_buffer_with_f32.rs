@@ -31,14 +31,12 @@ fn test_startup(mut commands: Commands, asset_server: Res<AssetServer>) {
     let fill_buffer_node = builder::ComputeNodeBuilder::default()
         .shader(asset_server.load("shaders/example_fill_f32_buffer.wgsl"))
         .entry_point("main")
-        .dispatch_workgroups_strategy(compute::DispatchWorkgroupsStrategy::FromGraphContext(
-            |graph| {
-                let x = graph
-                    .get_input_buffer("buffer")
-                    .map_or(1, |b| b.size() / size_of::<f32>() as u64);
-                (x as u32, 1, 1)
-            },
-        ));
+        .dispatch_workgroups_strategy(DispatchWorkgroupsStrategy::FromGraphContext(|graph| {
+            let x = graph
+                .get_input_buffer("buffer")
+                .map_or(1, |b| b.size() / size_of::<f32>() as u64);
+            (x as u32, 1, 1)
+        }));
     let fill_buffer_node = fill_buffer_node
         .bind_resource()
         .name("buffer")

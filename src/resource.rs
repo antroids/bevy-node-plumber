@@ -1,8 +1,12 @@
+use bevy::prelude::*;
+use bevy::utils::HashMap;
+use bevy_render::render_graph::OutputSlotError;
 use bevy_render::render_resource::TextureViewDescriptor;
 use bevy_render::renderer::RenderDevice;
 use bevy_render::{render_graph, render_resource};
 use std::borrow::Cow;
 use std::fmt::Debug;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BindResourceCreationStrategy<T: Clone + Debug + PartialEq> {
@@ -117,4 +121,177 @@ pub struct BindResourceCreationInfo {
     pub name: Cow<'static, str>,
     pub binding: u32,
     pub direction: BindResourceDirection,
+}
+
+impl BindResourceCreationInfo {
+    pub(crate) fn input_output_slot_info<'a>(
+        iterator: impl IntoIterator<Item = &'a BindResourceCreationInfo>,
+    ) -> (Vec<render_graph::SlotInfo>, Vec<render_graph::SlotInfo>) {
+        let mut input_slots: Vec<render_graph::SlotInfo> = default();
+        let mut output_slots: Vec<render_graph::SlotInfo> = default();
+
+        for bind_resource_info in iterator {
+            match &bind_resource_info.direction {
+                BindResourceDirection::Input(slot_type) => {
+                    input_slots.push(render_graph::SlotInfo::new(
+                        bind_resource_info.name.clone(),
+                        *slot_type,
+                    ));
+                }
+                BindResourceDirection::Output(bind_resource_descriptor) => {
+                    let slot_info = render_graph::SlotInfo::new(
+                        bind_resource_info.name.clone(),
+                        bind_resource_descriptor.to_slot_type(),
+                    );
+                    output_slots.push(slot_info);
+                }
+                BindResourceDirection::InputOutput(slot_type) => {
+                    let slot_info =
+                        render_graph::SlotInfo::new(bind_resource_info.name.clone(), *slot_type);
+                    input_slots.push(slot_info.clone());
+                    output_slots.push(slot_info);
+                }
+            }
+        }
+
+        (input_slots, output_slots)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct NodeResources {
+    bind_resource_info: Vec<BindResourceCreationInfo>,
+    bind_resource_cache:
+        Arc<Mutex<HashMap<usize, (StaticBindResourceCreationDescriptor, OwnBindResource)>>>,
+}
+
+impl NodeResources {
+    pub(crate) fn from_bind_resource_info(
+        bind_resource_info: Vec<BindResourceCreationInfo>,
+    ) -> Self {
+        Self {
+            bind_resource_info,
+            bind_resource_cache: default(),
+        }
+    }
+
+    pub(crate) fn set_bind_group(
+        &self,
+        render_device: &RenderDevice,
+        graph: &render_graph::RenderGraphContext,
+        layout: &render_resource::BindGroupLayout,
+    ) -> Result<render_resource::BindGroup, render_graph::NodeRunError> {
+        let mut entries: Vec<render_resource::BindGroupEntry> = default();
+        let mut output_resources: Vec<(u32, OwnBindResource)> = default();
+
+        for (index, info) in self.bind_resource_info.iter().enumerate() {
+            match &info.direction {
+                BindResourceDirection::Input(_) | BindResourceDirection::InputOutput(_) => {
+                    if let Ok(value) = graph.get_input(info.name.clone()) {
+                        entries.push(render_resource::BindGroupEntry {
+                            binding: info.binding,
+                            resource: slot_value_to_bind_resource(value),
+                        });
+                    } else {
+                        return Err(render_graph::NodeRunError::InputSlotError(
+                            render_graph::InputSlotError::InvalidSlot(info.name.clone().into()),
+                        ));
+                    }
+                }
+                BindResourceDirection::Output(_) => {
+                    output_resources.push((
+                        info.binding,
+                        self.get_output_resource(index, graph, render_device)?,
+                    ));
+                }
+            }
+        }
+
+        for (binding, output_resource) in &output_resources {
+            entries.push(render_resource::BindGroupEntry {
+                binding: *binding,
+                resource: output_resource.as_binding_resource(),
+            });
+        }
+        let bind_group = render_device.create_bind_group(None, layout, &entries);
+
+        Ok(bind_group)
+    }
+
+    pub(crate) fn set_output_slots(
+        &self,
+        graph: &mut render_graph::RenderGraphContext,
+        render_device: &RenderDevice,
+    ) -> Result<(), render_graph::NodeRunError> {
+        for (index, info) in self.bind_resource_info.iter().enumerate() {
+            match info.direction {
+                BindResourceDirection::Output(_) => {
+                    let label: render_graph::SlotLabel = info.name.clone().into();
+                    graph.set_output(
+                        label,
+                        self.get_output_resource(index, graph, render_device)?
+                            .to_slot_value(),
+                    )?;
+                }
+                BindResourceDirection::InputOutput(_) => {
+                    let label: render_graph::SlotLabel = info.name.clone().into();
+                    graph.set_output(label.clone(), graph.get_input(label)?.clone())?;
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn get_output_resource(
+        &self,
+        index: usize,
+        graph: &render_graph::RenderGraphContext,
+        render_device: &RenderDevice,
+    ) -> Result<OwnBindResource, render_graph::NodeRunError> {
+        let Some(BindResourceCreationInfo {
+            direction: BindResourceDirection::Output(descriptor),
+            ..
+        }) = self.bind_resource_info.get(index)
+        else {
+            return Err(render_graph::NodeRunError::OutputSlotError(
+                OutputSlotError::InvalidSlot(index.into()),
+            ));
+        };
+        let mut cache = self
+            .bind_resource_cache
+            .lock()
+            .expect("Bind Resource cache mutex is poisoned");
+        let static_descriptor = descriptor.clone().into_static(graph);
+        if let Some((cached_static_descriptor, cached_resource)) = cache.get(&index) {
+            if cached_static_descriptor == &static_descriptor {
+                debug!("Output Bind Resource {:?} found in cache", &descriptor);
+                return Ok(cached_resource.clone());
+            }
+        };
+        let resource = static_descriptor.create_resource(render_device);
+        debug!(
+            "Output Bind Resource {:?} missing in cache, created new: {:?}",
+            &descriptor, &resource
+        );
+        cache.insert(index, (static_descriptor, resource));
+        Ok(cache.get(&index).expect("Must be inserted").1.clone())
+    }
+}
+
+fn slot_value_to_bind_resource(
+    slot_value: &render_graph::SlotValue,
+) -> render_resource::BindingResource {
+    match slot_value {
+        render_graph::SlotValue::Buffer(buffer) => buffer.as_entire_binding(),
+        render_graph::SlotValue::TextureView(texture_view) => {
+            render_resource::BindingResource::TextureView(texture_view)
+        }
+
+        render_graph::SlotValue::Sampler(sampler) => {
+            render_resource::BindingResource::Sampler(sampler)
+        }
+        render_graph::SlotValue::Entity(_) => todo!(),
+    }
 }

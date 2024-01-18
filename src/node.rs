@@ -73,3 +73,27 @@ pub(crate) fn add_or_replace_graph_node<T: render_graph::Node>(
         graph.add_node(name, node_impl);
     }
 }
+
+#[derive(Debug, Clone)]
+pub enum DispatchWorkgroupsStrategy {
+    Static(u32, u32, u32),
+    FromGraphContext(fn(&render_graph::RenderGraphContext) -> (u32, u32, u32)),
+}
+
+impl Default for DispatchWorkgroupsStrategy {
+    fn default() -> Self {
+        Self::Static(1, 1, 1)
+    }
+}
+
+impl DispatchWorkgroupsStrategy {
+    pub(crate) fn workgroups_to_dispatch(
+        &self,
+        graph: &render_graph::RenderGraphContext,
+    ) -> (u32, u32, u32) {
+        match self {
+            DispatchWorkgroupsStrategy::Static(x, y, z) => (*x, *y, *z),
+            DispatchWorkgroupsStrategy::FromGraphContext(from_graph) => from_graph(graph),
+        }
+    }
+}

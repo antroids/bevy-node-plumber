@@ -30,6 +30,7 @@ pub mod prelude {
     pub use crate::node::input;
     pub use crate::node::input::InputBuffer;
     pub use crate::node::output;
+    pub use crate::node::DispatchWorkgroupsStrategy;
 }
 
 pub struct NodePlumberPlugin;

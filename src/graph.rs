@@ -129,8 +129,17 @@ impl SubGraph {
                         trigger: sub_graph.trigger.clone(),
                     },
                 );
+            } else if let Some(cached) = sub_graph_cache.0.get(&entity) {
+                // Sync providers state
+                sub_graph.providers = cached.providers.clone();
             }
         }
+    }
+    pub fn name(&self) -> &Cow<'static, str> {
+        &self.name
+    }
+    pub fn providers(&self) -> &HashMap<Entity, ProviderDescriptor> {
+        &self.providers
     }
 }
 

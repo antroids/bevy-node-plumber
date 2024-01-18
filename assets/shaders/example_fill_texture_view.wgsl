@@ -6,7 +6,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(num_workgr
     let color = vec4<f32>(
         f32(global_id.x) / f32(num_workgroups.x),
         f32(global_id.y) / f32(num_workgroups.y),
-        0.2,
+        0.5,
         1.0);
     textureStore(texture, location, color);
 }
