@@ -6,11 +6,7 @@ use bevy_render::render_resource::{Extent3d, TextureDimension, TextureFormat, Te
 
 fn main() {
     let mut app = App::new();
-    #[cfg(debug_assertions)]
-    app.add_plugins(DefaultPlugins.set(bevy::log::LogPlugin {
-        level: bevy::log::Level::DEBUG,
-        filter: "debug,wgpu_core=warn,wgpu_hal=warn,mygame=debug".into(),
-    }));
+    app.add_plugins(DefaultPlugins);
     app.add_plugins(NodePlumberPlugin)
         .add_systems(Startup, test_startup)
         .add_systems(PreUpdate, update_node_on_shader_changed);

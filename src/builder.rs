@@ -7,7 +7,9 @@ use crate::resource::BindResourceCreationStrategy;
 use crate::NodeProvider;
 use bevy::prelude::*;
 use bevy::utils::HashMap;
-use bevy_render::render_graph::{NodeLabel, RenderGraph, SlotInfo, SlotLabel, SlotType};
+use bevy_render::render_graph::{
+    NodeLabel, RenderGraph, RenderGraphError, SlotInfo, SlotLabel, SlotType,
+};
 use bevy_render::render_resource::{
     BindGroupLayout, BufferAddress, BufferUsages, ComputePipelineDescriptor, PushConstantRange,
     ShaderDefVal,
@@ -37,10 +39,12 @@ macro_rules! option_into_setter {
 
 #[derive(Error, Debug)]
 pub enum BuilderError {
-    #[error("Builder value '{0}' is mandatory, but was not defined")]
+    #[error("Builder value `{0}` is mandatory, but was not defined")]
     ValueNotDefined(&'static str),
-    #[error("Builder validation error: {0}")]
+    #[error("Builder validation error: `{0}`")]
     ValidationError(String),
+    #[error("Render graph error: `{0}`")]
+    RenderGraphError(#[from] RenderGraphError),
 }
 
 impl From<&'static str> for BuilderError {
@@ -435,12 +439,12 @@ impl SubGraphBuilder {
         );
 
         for (out_node, in_node) in &self.node_edges {
-            self.graph.add_node_edge(out_node, in_node);
+            self.graph.try_add_node_edge(out_node, in_node)?;
         }
 
         for (out_node, out_slot, in_node, in_slot) in &self.slot_edges {
             self.graph
-                .add_slot_edge(out_node, out_slot, in_node, in_slot);
+                .try_add_slot_edge(out_node, out_slot, in_node, in_slot)?;
         }
 
         Ok(SubGraph {
